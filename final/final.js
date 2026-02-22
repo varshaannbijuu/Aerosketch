@@ -1,15 +1,31 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js';
 import { setDrawingCompleteCallback } from '../tracking/tracking.js';
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js';
 
 /* ===== SETUP ===== */
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x222222);
+const video = document.getElementById("webcam");
 
+const videoTexture = new THREE.VideoTexture(video);
+
+const bgGeometry = new THREE.PlaneGeometry(16, 9);
+const bgMaterial = new THREE.MeshBasicMaterial({ 
+    map: videoTexture 
+});
+
+const backgroundMesh = new THREE.Mesh(bgGeometry, bgMaterial);
+
+// Position it behind everything
+backgroundMesh.position.z = -10;
+
+scene.add(backgroundMesh);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.z = 12;
+camera.position.z = 10;
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ 
+    antialias: true,
+    alpha: true
+});
+renderer.setClearColor(0x000000, 0);
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
