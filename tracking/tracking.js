@@ -13,10 +13,47 @@ canvasElement.height = window.innerHeight;
 let path = [];
 let drawing = false;
 
-const SMOOTHING_WINDOW = 8;
-const MOVEMENT_THRESHOLD = 0.015;
+// Improved Smoothing Constants
+const MOVEMENT_THRESHOLD = 0.002; // Reduced for finer detail
 
-let smoothingBuffer = [];
+// One Euro Filter Implementation
+class LowPassFilter {
+    constructor(alpha) {
+        this.alpha = alpha;
+        this.y = null;
+    }
+    filter(value) {
+        if (this.y === null) this.y = value;
+        else this.y = this.alpha * value + (1.0 - this.alpha) * this.y;
+        return this.y;
+    }
+}
+
+class OneEuroFilter {
+    constructor(minCutoff = 1.0, beta = 0.007, dCutoff = 1.0) {
+        this.minCutoff = minCutoff;
+        this.beta = beta;
+        this.dCutoff = dCutoff;
+        this.xFilter = new LowPassFilter(this.alpha(minCutoff));
+        this.dxFilter = new LowPassFilter(this.alpha(dCutoff));
+        this.lastValue = null;
+    }
+    alpha(cutoff) {
+        const te = 1.0 / 30; // Assuming ~30fps from MediaPipe
+        const tau = 1.0 / (2 * Math.PI * cutoff);
+        return 1.0 / (1.0 + tau / te);
+    }
+    filter(value) {
+        const dx = this.lastValue === null ? 0 : value - this.lastValue;
+        const edx = this.dxFilter.filter(dx);
+        const cutoff = this.minCutoff + this.beta * Math.abs(edx);
+        this.lastValue = value;
+        return this.xFilter.filter(value, this.alpha(cutoff));
+    }
+}
+
+const filterX = new OneEuroFilter(0.5, 0.05); // Tweakable: minCutoff, beta
+const filterY = new OneEuroFilter(0.5, 0.05);
 
 let onDrawingComplete = null;
 
@@ -33,25 +70,6 @@ function distance(a, b) {
     );
 }
 
-function smoothPoint(point) {
-    smoothingBuffer.push(point);
-
-    if (smoothingBuffer.length > SMOOTHING_WINDOW) {
-        smoothingBuffer.shift();
-    }
-
-    const avg = smoothingBuffer.reduce((acc, p) => {
-        acc.x += p.x;
-        acc.y += p.y;
-        return acc;
-    }, { x: 0, y: 0 });
-
-    avg.x /= smoothingBuffer.length;
-    avg.y /= smoothingBuffer.length;
-
-    return avg;
-}
-
 function clearCanvas() {
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 }
@@ -60,22 +78,40 @@ function drawTrail() {
     if (path.length < 2) return;
 
     canvasCtx.strokeStyle = "cyan";
-    canvasCtx.lineWidth = 4;
+    canvasCtx.lineWidth = 5;
     canvasCtx.lineCap = "round";
-    canvasCtx.beginPath();
+    canvasCtx.lineJoin = "round";
+    
+    // Shadow for better visibility
+    canvasCtx.shadowBlur = 10;
+    canvasCtx.shadowColor = "rgba(0, 255, 255, 0.5)";
 
-    for (let i = 0; i < path.length - 1; i++) {
-        canvasCtx.moveTo(
-            path[i].x * canvasElement.width,
-            path[i].y * canvasElement.height
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(path[0].x * canvasElement.width, path[0].y * canvasElement.height);
+
+    for (let i = 1; i < path.length - 2; i++) {
+        const xc = (path[i].x + path[i + 1].x) / 2 * canvasElement.width;
+        const yc = (path[i].y + path[i + 1].y) / 2 * canvasElement.height;
+        canvasCtx.quadraticCurveTo(
+            path[i].x * canvasElement.width, 
+            path[i].y * canvasElement.height, 
+            xc, yc
         );
-        canvasCtx.lineTo(
-            path[i + 1].x * canvasElement.width,
-            path[i + 1].y * canvasElement.height
+    }
+
+    // Connect last few points
+    if (path.length > 2) {
+        const last = path.length - 1;
+        canvasCtx.quadraticCurveTo(
+            path[last - 1].x * canvasElement.width,
+            path[last - 1].y * canvasElement.height,
+            path[last].x * canvasElement.width,
+            path[last].y * canvasElement.height
         );
     }
 
     canvasCtx.stroke();
+    canvasCtx.shadowBlur = 0; // Reset shadow
 }
 
 /* ---------------- MEDIAPIPE ---------------- */
@@ -97,7 +133,6 @@ hands.onResults(results => {
 
     if (!results.multiHandLandmarks.length) {
         drawing = false;
-        smoothingBuffer = [];
         return;
     }
 
@@ -118,9 +153,9 @@ hands.onResults(results => {
 
     const isPinching = pinchActive;
 
-    const currentPoint = {
-        x: indexTip.x,
-        y: indexTip.y
+    const smooth = {
+        x: filterX.filter(indexTip.x),
+        y: filterY.filter(indexTip.y)
     };
 
     if (isPinching) {
@@ -128,10 +163,7 @@ hands.onResults(results => {
         if (!drawing) {
             drawing = true;
             path = [];
-            smoothingBuffer = [];
         }
-
-        const smooth = smoothPoint(currentPoint);
 
         if (
             path.length === 0 ||
@@ -144,14 +176,13 @@ hands.onResults(results => {
     else {
 
         // Drawing complete event
-        if (drawing && path.length > 15) {
+        if (drawing && path.length > 10) {
             if (onDrawingComplete) {
                 onDrawingComplete([...path]);
             }
         }
 
         drawing = false;
-        smoothingBuffer = [];
     }
 
     drawTrail();

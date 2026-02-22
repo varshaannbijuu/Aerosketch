@@ -14,5 +14,25 @@
 <body>
     <script type="module" src="./renderer.js"></script>
 </body>
+<div id="recUI">
+  <button id="recordBtn">Start Recording</button>
+</div>
+
+<style>
+#recUI {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+}
+#recUI button {
+  background: red;
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+</style>
 
 </html>

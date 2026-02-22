@@ -1,44 +1,153 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js';
 import { setDrawingCompleteCallback } from '../tracking/tracking.js';
 
-/* ===== SETUP ===== */
-const scene = new THREE.Scene();
+/* =========================
+   BASIC SETUP
+========================= */
+
 const video = document.getElementById("webcam");
+const overlay = document.getElementById("overlay");
+const ctx = overlay.getContext("2d");
 
-const videoTexture = new THREE.VideoTexture(video);
+overlay.width = window.innerWidth;
+overlay.height = window.innerHeight;
 
-const bgGeometry = new THREE.PlaneGeometry(16, 9);
-const bgMaterial = new THREE.MeshBasicMaterial({ 
-    map: videoTexture 
-});
+const scene = new THREE.Scene();
 
-const backgroundMesh = new THREE.Mesh(bgGeometry, bgMaterial);
-
-// Position it behind everything
-backgroundMesh.position.z = -10;
-
-scene.add(backgroundMesh);
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1000
+);
 camera.position.z = 10;
 
-const renderer = new THREE.WebGLRenderer({ 
+const renderer = new THREE.WebGLRenderer({
     antialias: true,
     alpha: true
 });
-renderer.setClearColor(0x000000, 0);
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000000, 0);
+renderer.domElement.style.position = "absolute";
+renderer.domElement.style.zIndex = "1";
 document.body.appendChild(renderer.domElement);
+
+overlay.style.position = "absolute";
+overlay.style.zIndex = "2";
+overlay.style.pointerEvents = "none";
 
 scene.add(new THREE.AmbientLight(0xffffff, 1));
 
+/* =========================
+   VIDEO BACKGROUND
+========================= */
+
+const videoTexture = new THREE.VideoTexture(video);
+const bgMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
+const bgGeometry = new THREE.PlaneGeometry(1, 1);
+const backgroundMesh = new THREE.Mesh(bgGeometry, bgMaterial);
+backgroundMesh.position.z = -10;
+scene.add(backgroundMesh);
+
+function updateBackgroundScale() {
+    const dist = camera.position.z + 10;
+    const vFov = (camera.fov * Math.PI) / 180;
+    const height = 2 * Math.tan(vFov / 2) * dist;
+    const width = height * camera.aspect;
+    backgroundMesh.scale.set(width, height, 1);
+}
+
+video.addEventListener("loadedmetadata", updateBackgroundScale);
+
+window.addEventListener("resize", () => {
+    overlay.width = window.innerWidth;
+    overlay.height = window.innerHeight;
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    updateBackgroundScale();
+});
+
+/* =========================
+   RECORDING
+========================= */
+
+let mediaRecorder;
+let recordedChunks = [];
+let isRecording = false;
+
+const recordBtn = document.getElementById("recordBtn");
+
+recordBtn.addEventListener("click", () => {
+
+    if (!isRecording) {
+
+        const stream = renderer.domElement.captureStream(60);
+
+        let options = {};
+        if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9"))
+            options.mimeType = "video/webm;codecs=vp9";
+        else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8"))
+            options.mimeType = "video/webm;codecs=vp8";
+
+        mediaRecorder = new MediaRecorder(stream, options);
+        recordedChunks = [];
+
+        mediaRecorder.ondataavailable = e => {
+            if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: "video/webm" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "AirSketchRecording.webm";
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+        recordBtn.textContent = "Stop Recording";
+        recordBtn.style.background = "black";
+
+    } else {
+        mediaRecorder.stop();
+        isRecording = false;
+        recordBtn.textContent = "Start Recording";
+        recordBtn.style.background = "red";
+    }
+});
+
+/* =========================
+   DRAW CYAN TRAIL
+========================= */
+
+function drawPath(path) {
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    if (path.length < 2) return;
+
+    ctx.strokeStyle = "cyan";
+    ctx.lineWidth = 4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
+
+    for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x, path[i].y);
+    }
+
+    ctx.stroke();
+}
+
+/* =========================
+   SHAPE SPAWNING
+========================= */
+
 const objects = [];
-
-/* ===== DRAW ===== */
-let isDrawing = false;
-let path = [];
-
-
-/* ===== HELPERS ===== */
 
 function screenToWorld(x, y) {
     const ndc = new THREE.Vector3(
@@ -52,221 +161,59 @@ function screenToWorld(x, y) {
     return camera.position.clone().add(dir.multiplyScalar(dist));
 }
 
-function boundingBox(path) {
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    path.forEach(p => {
-        minX = Math.min(minX, p.x);
-        maxX = Math.max(maxX, p.x);
-        minY = Math.min(minY, p.y);
-        maxY = Math.max(maxY, p.y);
-    });
-    return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
-}
-
-function getDistance(p1, p2) {
-    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
-}
-
-function resamplePath(points, n) {
-    if (points.length === 0) return [];
-    const resampled = [points[0]];
-    const totalLen = points.reduce((acc, p, i) => i === 0 ? 0 : acc + getDistance(p, points[i - 1]), 0);
-    const interval = totalLen / (n - 1);
-    let distAccum = 0;
-    const pts = [...points];
-
-    for (let i = 1; i < pts.length; i++) {
-        let d = getDistance(pts[i], pts[i - 1]);
-        if (distAccum + d >= interval) {
-            const ratio = (interval - distAccum) / d;
-            const newPoint = {
-                x: pts[i - 1].x + ratio * (pts[i].x - pts[i - 1].x),
-                y: pts[i - 1].y + ratio * (pts[i].y - pts[i - 1].y)
-            };
-            resampled.push(newPoint);
-            pts.splice(i, 0, newPoint);
-            distAccum = 0;
-        } else {
-            distAccum += d;
-        }
-    }
-    while (resampled.length < n) resampled.push(pts[pts.length - 1]);
-    return resampled.slice(0, n);
-}
-
-function simplifyPath(points, epsilon) {
-    if (points.length <= 2) return points;
-    let maxDist = 0, index = 0;
-    const start = points[0], end = points[points.length - 1];
-
-    for (let i = 1; i < points.length - 1; i++) {
-        const p = points[i];
-        const area = Math.abs(0.5 * (start.x * (end.y - p.y) + end.x * (p.y - start.y) + p.x * (start.y - end.y)));
-        const bottom = getDistance(start, end);
-        const dist = bottom === 0 ? getDistance(p, start) : (area * 2) / bottom;
-        if (dist > maxDist) { maxDist = dist; index = i; }
-    }
-
-    if (maxDist > epsilon) {
-        const left = simplifyPath(points.slice(0, index + 1), epsilon);
-        const right = simplifyPath(points.slice(index), epsilon);
-        return left.slice(0, left.length - 1).concat(right);
-    } else return [start, end];
-}
-
-function getArea(path) {
-    let area = 0;
-    for (let i = 0; i < path.length; i++) {
-        const p1 = path[i], p2 = path[(i + 1) % path.length];
-        area += (p1.x * p2.y - p2.x * p1.y);
-    }
-    return Math.abs(area) / 2;
-}
-
-function getPathLength(path) {
-    let len = 0;
-    for (let i = 1; i < path.length; i++) len += getDistance(path[i], path[i - 1]);
-    return len;
-}
-
-/* ===== PROCESS ===== */
-
 function process(path) {
-    const box = boundingBox(path);
-    const start = path[0], end = path[path.length - 1];
-    const closed = getDistance(start, end) < 60;
+
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    if (!path || path.length < 5) return;   // lowered threshold
+
     const centerX = path.reduce((a, b) => a + b.x, 0) / path.length;
     const centerY = path.reduce((a, b) => a + b.y, 0) / path.length;
+
     const worldPos = screenToWorld(centerX, centerY);
 
-    const len = getPathLength(path);
-    if (!closed && getDistance(start, end) / len > 0.85) return spawn("line", box, worldPos, path);
+    const geometry = new THREE.SphereGeometry(1, 32, 32);
 
-    // 1. Polygon Recognition (High resolution priority)
-    const poly = simplifyPath(resamplePath(path, 100), 25);
-    const vertices = poly.length - 1;
-
-    // 2. Area/Perimeter analysis for special shapes
-    const area = getArea(path);
-    const hullArea = box.width * box.height;
-    const circularity = (4 * Math.PI * area) / (len * len);
-
-    // Highly circular shapes are always circles
-    if (circularity > 0.82) return spawn("circle", box, worldPos, path);
-
-    // Spiky shapes are stars
-    if (area / hullArea < 0.45 && vertices >= 5) return spawn("star", box, worldPos, path);
-
-    if (vertices === 3) return spawn("triangle", box, worldPos, path);
-    if (vertices === 4) {
-        // Distinguish Diamond vs Rectangle
-        const isDiamond = Math.abs(poly[0].x - poly[2].x) < (box.width * 0.25) || Math.abs(poly[1].y - poly[3].y) < (box.height * 0.25);
-        if (isDiamond) return spawn("diamond", box, worldPos, path);
-
-        return (Math.abs(box.width - box.height) < box.width * 0.3) ? spawn("square", box, worldPos, path) : spawn("rectangle", box, worldPos, path);
-    }
-    if (vertices === 5) return spawn("pentagon", box, worldPos, path);
-
-    // Fallback for imperfect circles
-    if (circularity > 0.7) return spawn("circle", box, worldPos, path);
-
-    spawn("blob", box, worldPos, path);
-}
-
-/* ===== SPAWN ===== */
-
-function spawn(type, box, center, path) {
-    let geometry;
-    const color = new THREE.Color().setHSL(Math.random(), 0.7, 0.6);
-    const material = new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide, flatShading: true });
-    const viewHeight = 2 * Math.tan((75 * Math.PI) / 360) * 12;
-    const pixelScale = viewHeight / window.innerHeight;
-
-    const createShape = (pts, depth = 0.5) => {
-        const s = new THREE.Shape();
-        s.moveTo(pts[0].x * pixelScale, -pts[0].y * pixelScale);
-        for (let i = 1; i < pts.length; i++) s.lineTo(pts[i].x * pixelScale, -pts[i].y * pixelScale);
-        s.closePath();
-        return new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: true, bevelThickness: 0.1, bevelSize: 0.1 });
-    };
-
-    if (type === "line") geometry = new THREE.BoxGeometry(box.width * pixelScale, 0.2, 0.2);
-    else if (type === "circle") geometry = new THREE.SphereGeometry((box.width + box.height) / 4 * pixelScale, 32, 32);
-    else if (type === "triangle") geometry = new THREE.ConeGeometry(box.width / 2 * pixelScale, box.height * pixelScale, 3);
-    else if (type === "square" || type === "rectangle") {
-        const w = box.width / 2, h = box.height / 2;
-        geometry = createShape([{ x: -w, y: -h }, { x: w, y: -h }, { x: w, y: h }, { x: -w, y: h }]);
-    } else if (type === "diamond") {
-        const w = box.width / 2, h = box.height / 2;
-        geometry = createShape([{ x: 0, y: -h }, { x: w, y: 0 }, { x: 0, y: h }, { x: -w, y: 0 }]);
-    } else if (type === "pentagon") {
-        const r = (box.width + box.height) / 4, pts = [];
-        for (let i = 0; i < 5; i++) {
-            const angle = i * 2 * Math.PI / 5 - Math.PI / 2;
-            pts.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
-        }
-        geometry = createShape(pts);
-    } else if (type === "star") {
-        const r1 = (box.width + box.height) / 4, r2 = r1 / 2.5, pts = [];
-        for (let i = 0; i < 10; i++) {
-            const r = i % 2 === 0 ? r1 : r2, angle = i * Math.PI / 5 - Math.PI / 2;
-            pts.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
-        }
-        geometry = createShape(pts);
-    } else {
-        const cx = path.reduce((a, b) => a + b.x, 0) / path.length, cy = path.reduce((a, b) => a + b.y, 0) / path.length;
-        const pts = simplifyPath(path, 2).map(p => ({ x: p.x - cx, y: p.y - cy }));
-        geometry = createShape(pts);
-    }
+    const material = new THREE.MeshPhongMaterial({
+        color: new THREE.Color().setHSL(Math.random(), 0.7, 0.6)
+    });
 
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.copy(center);
-    if (["square", "rectangle", "triangle", "diamond", "pentagon", "star"].includes(type)) mesh.rotation.x = 0;
+    mesh.position.copy(worldPos);
+
     scene.add(mesh);
     objects.push(mesh);
 }
 
-/* ===== ROTATE & DELETE ===== */
-
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-let selected = null;
-
-window.addEventListener("click", (e) => {
-    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(objects);
-    selected = hits.length ? hits[0].object : null;
-});
-
-window.addEventListener("mousemove", (e) => {
-    if (!selected || isDrawing) return;
-    selected.rotation.y += e.movementX * 0.01;
-    selected.rotation.x += e.movementY * 0.01;
-});
-
-window.addEventListener("dblclick", () => {
-    if (!selected) return;
-    scene.remove(selected);
-    objects.splice(objects.indexOf(selected), 1);
-    selected = null;
-});
-
-/* ===== LOOP ===== */
+/* =========================
+   RENDER LOOP
+========================= */
 
 function animate() {
     requestAnimationFrame(animate);
+
+    objects.forEach((obj, i) => {
+        obj.rotation.y += 0.01;
+        obj.position.y += Math.sin(Date.now() * 0.001 + i) * 0.002;
+    });
+
     renderer.render(scene, camera);
 }
 animate();
 
+/* =========================
+   TRACKING CALLBACK
+========================= */
+
 setDrawingCompleteCallback((normalizedPath) => {
+
+    console.log("CALLBACK WORKING", normalizedPath.length);
 
     const pixelPath = normalizedPath.map(p => ({
         x: p.x * window.innerWidth,
         y: p.y * window.innerHeight
     }));
 
-    process(pixelPath);
+    drawPath(pixelPath);   // cyan
+    process(pixelPath);    // spawn
 });
