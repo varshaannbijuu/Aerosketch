@@ -13,8 +13,8 @@ canvasElement.height = window.innerHeight;
 let path = [];
 let drawing = false;
 
-const SMOOTHING_WINDOW = 5;
-const MOVEMENT_THRESHOLD = 0.01;
+const SMOOTHING_WINDOW = 8;
+const MOVEMENT_THRESHOLD = 0.015;
 
 let smoothingBuffer = [];
 

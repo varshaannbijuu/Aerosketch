@@ -246,7 +246,7 @@ window.addEventListener("mousemove", (e) => {
     selected.rotation.x += e.movementY * 0.01;
 });
 
-window.addEvenstListener("dblclick", () => {
+window.addEventListener("dblclick", () => {
     if (!selected) return;
     scene.remove(selected);
     objects.splice(objects.indexOf(selected), 1);
