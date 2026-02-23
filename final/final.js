@@ -1,7 +1,9 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js';
-import { setDrawingCompleteCallback } from '../tracking/tracking.js';
+import { setDrawingCompleteCallback, setOnHandUpdate } from '../tracking/tracking.js';
 
 const objects = [];
+let prevHandPos = null;
+let lastGesture = "NONE";
 
 /* =========================
    BASIC SETUP
@@ -379,53 +381,53 @@ function spawn(type, box, center, path) {
 }
 
 /* =========================
-   USER INTERACTION
+   USER INTERACTION (HAND GESTURES)
 ========================= */
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let selected = null;
 
-// Use mousedown/mousemove for selection to work with potential overlay blocking
-// But click is cleaner for select.
-window.addEventListener("click", (e) => {
-    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(objects);
-
-    if (hits.length > 0) {
-        const clicked = hits[0].object;
-        if (selected === clicked) {
-            selected = null; // Toggle off
+setOnHandUpdate((handData) => {
+    const { x, y, gesture, isPinching } = handData;
+    
+    // 1. Convert to NDC for THREE.js Raycaster
+    mouse.x = x * 2 - 1;
+    mouse.y = -(y * 2 - 1);
+    
+    // 2. Selection: Open Palm over an object
+    if (gesture === "OPEN_PALM" && !isPinching) {
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(objects);
+        if (hits.length > 0) {
+            selected = hits[0].object;
         } else {
-            selected = clicked; // Select new
+            selected = null;
         }
-    } else {
-        selected = null; // Clicked background
     }
-});
 
-window.addEventListener("mousemove", (e) => {
-    if (!selected) return;
-    // Rotate selected object on mouse move with snappier sensitivity
-    selected.rotation.y += e.movementX * 0.012;
-    selected.rotation.x += e.movementY * 0.012;
-});
-
-window.addEventListener("dblclick", (e) => {
-    // Independent raycast for deletion to avoid selection conflicts
-    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(objects);
-
-    if (hits.length > 0) {
-        const toDelete = hits[0].object;
-        scene.remove(toDelete);
-        objects.splice(objects.indexOf(toDelete), 1);
-        if (selected === toDelete) selected = null;
+    // 3. Rotation: Two-Finger Gesture (Index + Middle extended)
+    if (gesture === "TWO_FINGERS" && selected && prevHandPos && !isPinching) {
+        // Calculate hand movement delta (normalized coordinates)
+        const dx = x - prevHandPos.x;
+        const dy = y - prevHandPos.y;
+        
+        // Apply rotation based on movement (scaled for responsiveness)
+        selected.rotation.y += dx * 5;
+        selected.rotation.x += dy * 5;
     }
+
+    // 4. Deletion: Closed Fist
+    // Only delete if we just transitioned to FIST from something else to avoid multi-deletes
+    if (gesture === "FIST" && lastGesture !== "FIST" && selected && !isPinching) {
+        scene.remove(selected);
+        objects.splice(objects.indexOf(selected), 1);
+        selected = null;
+    }
+
+    // 5. Update state for next frame
+    prevHandPos = { x, y };
+    lastGesture = gesture;
 });
 
 /* =========================

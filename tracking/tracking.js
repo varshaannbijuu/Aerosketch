@@ -58,9 +58,14 @@ const filterX = new OneEuroFilter(1.2, 0.01);
 const filterY = new OneEuroFilter(1.2, 0.01);
 
 let onDrawingComplete = null;
+let onHandUpdate = null;
 
 export function setDrawingCompleteCallback(callback) {
     onDrawingComplete = callback;
+}
+
+export function setOnHandUpdate(callback) {
+    onHandUpdate = callback;
 }
 
 /* ---------------- UTILS ---------------- */
@@ -70,6 +75,35 @@ function distance(a, b) {
         Math.pow(a.x - b.x, 2) +
         Math.pow(a.y - b.y, 2)
     );
+}
+
+function getGesture(landmarks) {
+    // Indices: Thumb(4), Index(8), Middle(12), Ring(16), Pinky(20)
+    // PIP Joints: Index(6), Middle(10), Ring(14), Pinky(18)
+    
+    // We use Y-coordinate comparison (MediaPipe Y is 0 at top, 1 at bottom)
+    // A finger is "extended" if its tip is above its PIP joint
+    const indexExtended = landmarks[8].y < landmarks[6].y;
+    const middleExtended = landmarks[12].y < landmarks[10].y;
+    const ringExtended = landmarks[16].y < landmarks[14].y;
+    const pinkyExtended = landmarks[20].y < landmarks[18].y;
+
+    // Open Palm: All fingers extended
+    if (indexExtended && middleExtended && ringExtended && pinkyExtended) {
+        return "OPEN_PALM";
+    }
+
+    // Two-Finger: Index and Middle extended, others closed
+    if (indexExtended && middleExtended && !ringExtended && !pinkyExtended) {
+        return "TWO_FINGERS";
+    }
+
+    // Closed Fist: All fingers closed
+    if (!indexExtended && !middleExtended && !ringExtended && !pinkyExtended) {
+        return "FIST";
+    }
+
+    return "NONE";
 }
 
 function clearCanvas() {
@@ -162,12 +196,23 @@ hands.onResults(results => {
     }
 
     const isPinching = pinchActive;
+    const currentGesture = getGesture(landmarks);
 
     // Filter AND Mirror at the source
     const smooth = {
         x: 1 - filterX.filter(indexTip.x), // Unified Mirroring
         y: filterY.filter(indexTip.y)
     };
+
+    // Interaction Callback for Selection, Rotation, Deletion
+    if (onHandUpdate) {
+        onHandUpdate({
+            x: smooth.x,
+            y: smooth.y,
+            gesture: currentGesture,
+            isPinching: isPinching
+        });
+    }
 
     if (isPinching) {
         if (!drawing) {

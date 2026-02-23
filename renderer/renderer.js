@@ -19,20 +19,9 @@ scene.add(light);
 
 const objects = [];
 
-/* ===== DRAW LOGIC ===== */
+/* ===== DRAW LOGIC (Handled by tracking.js in final implementation) ===== */
 let isDrawing = false;
 let path = [];
-
-window.addEventListener("mousedown", () => { isDrawing = true; path = []; });
-window.addEventListener("mouseup", () => {
-    isDrawing = false;
-    // Lowered threshold slightly for better responsiveness
-    if (path.length > 10) process(path);
-});
-window.addEventListener("mousemove", (e) => {
-    if (!isDrawing) return;
-    path.push({ x: e.clientX, y: e.clientY });
-});
 
 /* ===== HELPERS ===== */
 
@@ -235,36 +224,11 @@ function spawn(type, box, center, path) {
     objects.push(mesh);
 }
 
-/* ===== INTERACTION ===== */
+/* ===== INTERACTION (Handled by final.js and hand gestures) ===== */
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let selected = null;
-
-window.addEventListener("click", (e) => {
-    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(objects);
-    selected = hits.length ? hits[0].object : null;
-    
-    if (selected) {
-        console.log("Selected object:", selected.uuid);
-    }
-});
-
-window.addEventListener("mousemove", (e) => {
-    if (!selected || isDrawing) return;
-    selected.rotation.y += e.movementX * 0.01;
-    selected.rotation.x += e.movementY * 0.01;
-});
-
-window.addEventListener("dblclick", () => {
-    if (!selected) return;
-    scene.remove(selected);
-    objects.splice(objects.indexOf(selected), 1);
-    selected = null;
-});
 
 /* ===== LOOP ===== */
 
