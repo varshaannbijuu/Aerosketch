@@ -4,8 +4,10 @@ const canvasCtx = canvasElement.getContext("2d");
 
 let pinchActive = false;
 
-const PINCH_START_THRESHOLD = 0.045;
-const PINCH_RELEASE_THRESHOLD = 0.065;
+const PINCH_START_THRESHOLD = 0.035; // Snappier start
+const PINCH_RELEASE_THRESHOLD = 0.055; // Snappier release
+let handLossBuffer = 0;
+const MAX_HAND_LOSS_FRAMES = 15; // Allow ~0.5s of hand loss before completing drawing
 
 canvasElement.width = window.innerWidth;
 canvasElement.height = window.innerHeight;
@@ -52,8 +54,8 @@ class OneEuroFilter {
     }
 }
 
-const filterX = new OneEuroFilter(0.5, 0.05); // Tweakable: minCutoff, beta
-const filterY = new OneEuroFilter(0.5, 0.05);
+const filterX = new OneEuroFilter(1.2, 0.01);
+const filterY = new OneEuroFilter(1.2, 0.01);
 
 let onDrawingComplete = null;
 
@@ -81,20 +83,21 @@ function drawTrail() {
     canvasCtx.lineWidth = 5;
     canvasCtx.lineCap = "round";
     canvasCtx.lineJoin = "round";
-    
+
     // Shadow for better visibility
     canvasCtx.shadowBlur = 10;
     canvasCtx.shadowColor = "rgba(0, 255, 255, 0.5)";
 
     canvasCtx.beginPath();
+    // Path is now mirrored centrally in onResults
     canvasCtx.moveTo(path[0].x * canvasElement.width, path[0].y * canvasElement.height);
 
     for (let i = 1; i < path.length - 2; i++) {
         const xc = (path[i].x + path[i + 1].x) / 2 * canvasElement.width;
         const yc = (path[i].y + path[i + 1].y) / 2 * canvasElement.height;
         canvasCtx.quadraticCurveTo(
-            path[i].x * canvasElement.width, 
-            path[i].y * canvasElement.height, 
+            path[i].x * canvasElement.width,
+            path[i].y * canvasElement.height,
             xc, yc
         );
     }
@@ -132,57 +135,62 @@ hands.onResults(results => {
     clearCanvas();
 
     if (!results.multiHandLandmarks.length) {
-        drawing = false;
+        handLossBuffer++;
+        if (drawing && handLossBuffer > MAX_HAND_LOSS_FRAMES) {
+            if (path.length > 5 && onDrawingComplete) {
+                onDrawingComplete([...path]);
+            }
+            drawing = false;
+            pinchActive = false;
+        }
         return;
     }
+    handLossBuffer = 0; // Reset buffer if hand is found
 
     const landmarks = results.multiHandLandmarks[0];
 
     const thumbTip = landmarks[4];
     const indexTip = landmarks[8];
 
+    // Adjusted thresholds for more stable pinch
     const pinchDist = distance(thumbTip, indexTip);
-
-    // Hysteresis pinch logic
-    if (!pinchActive && pinchDist < PINCH_START_THRESHOLD) {
+    if (!pinchActive && pinchDist < 0.04) {
         pinchActive = true;
-    } 
-    else if (pinchActive && pinchDist > PINCH_RELEASE_THRESHOLD) {
+    }
+    else if (pinchActive && pinchDist > 0.08) {
         pinchActive = false;
     }
 
     const isPinching = pinchActive;
 
+    // Filter AND Mirror at the source
     const smooth = {
-        x: filterX.filter(indexTip.x),
+        x: 1 - filterX.filter(indexTip.x), // Unified Mirroring
         y: filterY.filter(indexTip.y)
     };
 
     if (isPinching) {
-
         if (!drawing) {
             drawing = true;
-            path = [];
+            path = []; // Start new path
         }
 
         if (
             path.length === 0 ||
-            distance(path[path.length - 1], smooth) > MOVEMENT_THRESHOLD
+            distance(path[path.length - 1], smooth) > 0.005 // Higher threshold to ignore tremors
         ) {
             path.push(smooth);
         }
-
-    } 
+    }
     else {
-
-        // Drawing complete event
-        if (drawing && path.length > 10) {
+        // Drawing complete
+        if (drawing && path.length > 5) {
             if (onDrawingComplete) {
                 onDrawingComplete([...path]);
             }
         }
-
         drawing = false;
+        // Do not clear path here, let the trail persist until the next pinch starts
     }
 
     drawTrail();

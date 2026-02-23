@@ -1,9 +1,13 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>AirSketch Studio</title>
     <style>
-        body { margin: 0; overflow: hidden; }
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
 
         video {
             position: absolute;
@@ -11,6 +15,8 @@
             height: 100%;
             object-fit: cover;
             z-index: 0;
+            transform: scaleX(-1);
+            /* Visual Mirroring */
         }
 
         canvas {
@@ -37,6 +43,7 @@
         }
     </style>
 </head>
+
 <body>
     <canvas id="overlay"></canvas>
     <video id="webcam" autoplay playsinline></video>
@@ -52,4 +59,5 @@
 
     <script type="module" src="./final.js"></script>
 </body>
+
 </html>
